@@ -1,0 +1,74 @@
+name: Build APK
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+      # Use the repo's committed debug.keystore instead of letting Gradle
+      # auto-generate a fresh one on this (ephemeral) runner. Without this,
+      # every CI build was signed with a different random key, so Android
+      # refused to install a new build over the previous one ("package
+      # conflicts with an existing package") - the whole point of the
+      # rolling release link is to update in place.
+      - name: Use fixed debug signing key
+        run: |
+          mkdir -p ~/.android
+          cp android/debug.keystore ~/.android/debug.keystore
+
+      # Release, not debug: the debug build bundles every CPU architecture
+      # uncompressed and unminified (~150MB), which is slow/flaky to
+      # download and install on a phone. Release is optimized and shrinks
+      # this further. Signed with the debug key for now (see
+      # android/app/build.gradle.kts) - fine for sideloaded test builds,
+      # not for a Play Store upload.
+      #
+      # --split-per-abi: a single "universal" release APK still bundles
+      # every CPU architecture (arm64, armv7, x86_64) in one ~50MB file,
+      # which has proven too large to download reliably over a phone's
+      # mobile connection (repeated "download won't finish"/"file can't be
+      # opened" reports). Splitting produces one APK per architecture,
+      # each only containing native code for that architecture - the
+      # arm64-v8a one (virtually all Android phones sold since ~2017) is
+      # roughly a third of the size and is what gets published below.
+      - run: flutter build apk --release --split-per-abi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: talksimple-apk
+          path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          retention-days: 30
+
+      # Direct single-file download link for testing on a phone: a rolling
+      # "latest-test-build" release whose APK asset gets replaced on every
+      # push. Skipped on pull_request runs so a PR build doesn't overwrite
+      # what's currently out for testing.
+      - name: Publish latest test build
+        if: github.event_name == 'push'
+        run: cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk TalkSimple.apk
+
+      - uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push'
+        with:
+          tag_name: latest-test-build
+          name: Letzter Testbuild
+          body: Automatisch bei jedem Push aktualisiert. Direkt am Handy herunterladen und installieren.
+          files: TalkSimple.apk
