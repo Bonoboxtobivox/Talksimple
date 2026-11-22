@@ -15,12 +15,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to the exact version the code is verified against locally, so a
+      # new stable release can't silently break the build (3.50 deprecated
+      # package:flutter/material.dart, which every screen still imports).
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.50.1
 
       - run: flutter pub get
-      - run: flutter analyze
+      # Warnings and errors still fail the build; infos (currently only the
+      # material.dart deprecation notices) are reported but not fatal until
+      # the migration to package:material_ui is done.
+      - run: flutter analyze --no-fatal-infos
       - run: flutter test
 
       # Use the repo's committed debug.keystore instead of letting Gradle

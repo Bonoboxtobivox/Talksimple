@@ -49,6 +49,15 @@ Zielplattformen: **Android zuerst** (Play Store), spaeter **iOS/iPadOS**
 - `android/` — natives Android-Projekt (Gradle), von Flutter verwaltet
 - `.claude/` — Claude-Code-Konfiguration (Settings, Worktree-Guard-Hooks)
 
+## Metacom-Symbole
+
+- Liegen NUR im Google Drive des Nutzers, Ordner `metabonsymbole`
+  (ID in `lib/services/drive_symbol_source.dart`), ein Unterordner je
+  Kategorie (Zeit, Tiere, Lebensmittel_Trinken, ...).
+- Dateinamen: klein, Umlaute umschrieben (`getraenk`, `weiss`), Varianten
+  mit `_` (`wein_rot`), Schwarz-Weiss-Version mit Suffix `SW`.
+- Lizenzpflichtig: Symbole **nie** ins Repo committen oder in die App bundeln.
+
 ## Konventionen (bitte einhalten)
 
 <!-- Deine Regeln. Beispiele - anpassen/loeschen: -->
