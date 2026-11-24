@@ -60,12 +60,14 @@ Zielplattformen: **Android zuerst** (Play Store), spaeter **iOS/iPadOS**
 
 ## Konventionen (bitte einhalten)
 
-<!-- Deine Regeln. Beispiele - anpassen/loeschen: -->
-
 - Schreib Code im Stil der umliegenden Dateien (gleiche Benennung, gleiche Struktur).
 - Keine neuen Abhaengigkeiten ohne kurze Rueckfrage.
-- <z.B. Alle Texte, die der Nutzer sieht, laufen ueber die Uebersetzungs-Datei — nichts fest im Code.>
-- <z.B. Neue Funktionen bekommen einen Test.>
+- Neue Funktionen bekommen einen Test.
+- Vor jedem Commit muessen `flutter analyze` und `flutter test` fehlerfrei
+  durchlaufen.
+- Bedienbarkeit: Tippflaechen mindestens 48 dp, fuer AAC-Kacheln und
+  Hauptknoepfe deutlich groesser. Wenige Elemente pro Bildschirm.
+- Die App ist vorerst nur auf Deutsch; Texte duerfen direkt im Code stehen.
 
 ## Arbeitsweise mit Claude (wichtig)
 
