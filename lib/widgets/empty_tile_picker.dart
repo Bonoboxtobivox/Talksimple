@@ -6,8 +6,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import '../models/symbol_tile.dart';
-import '../services/drive_symbol_source.dart';
 import '../services/symbol_library.dart';
+import '../services/symbol_resolver.dart';
 
 /// Fills an empty board tile: three equally large, equally easy ways in,
 /// for whoever's setting the board up (not the AAC user themselves).
@@ -131,25 +131,18 @@ class _EmptyTilePickerState extends State<EmptyTilePicker> {
       _statusMessage = 'Suche "$word" …';
     });
 
-    final library = await SymbolLibrary.open();
-    final entries = await library.loadAll();
-    SymbolTile? match;
-    for (final entry in entries) {
-      if (entry.label.toLowerCase() == word.toLowerCase()) {
-        match = entry;
-        break;
-      }
-    }
+    var match = await resolveSymbol(
+      word,
+      onSearchingDrive: () {
+        if (mounted) {
+          setState(() => _statusMessage = 'Suche in Google Drive …');
+        }
+      },
+    );
 
     if (match == null && mounted) {
-      setState(() => _statusMessage = 'Suche in Google Drive …');
-      final driveFile = await DriveSymbolSource.instance.findAndDownload(word);
-      if (driveFile != null) {
-        match = await library.import(sourcePath: driveFile.path, label: word);
-      }
+      match = await _captureFallbackPhoto(word, await SymbolLibrary.open());
     }
-
-    match ??= await _captureFallbackPhoto(word, library);
 
     if (!mounted) return;
     setState(() {

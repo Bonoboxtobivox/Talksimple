@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/symbol_tile.dart';
 import '../services/board_store.dart';
+import '../services/symbol_resolver.dart';
 import '../widgets/paged_symbol_grid.dart';
 import '../widgets/symbol_tile_widget.dart';
 import 'add_tile_screen.dart';
@@ -15,9 +16,13 @@ class BoardScreen extends StatefulWidget {
   /// [openRepository] overrides where board tiles are persisted; only meant
   /// for tests (an in-memory fake instead of real device storage). The app
   /// itself always uses the default, which persists to disk.
-  const BoardScreen({super.key, this.openRepository});
+  ///
+  /// [lookupSymbol] likewise overrides how a symbol is found for a word;
+  /// the app uses [resolveSymbol] (device library, then Google Drive).
+  const BoardScreen({super.key, this.openRepository, this.lookupSymbol});
 
   final Future<BoardRepository> Function()? openRepository;
+  final SymbolLookup? lookupSymbol;
 
   @override
   State<BoardScreen> createState() => BoardScreenState();
@@ -47,6 +52,7 @@ class BoardScreenState extends State<BoardScreen> {
 
   List<SymbolTile>? _tiles;
   int _phonePage = 0;
+  bool _fillingSymbols = false;
 
   @override
   void initState() {
@@ -85,6 +91,37 @@ class BoardScreenState extends State<BoardScreen> {
     await store.save(updated);
   }
 
+  /// Fills every tile that has no image yet with a matching symbol, so a
+  /// fresh board gets real pictures with one tap instead of one per tile.
+  Future<void> _fillSymbols() async {
+    final tiles = _tiles;
+    if (tiles == null || _fillingSymbols) return;
+    setState(() => _fillingSymbols = true);
+
+    final result = await fillMissingSymbols(
+      tiles,
+      widget.lookupSymbol ?? resolveSymbol,
+    );
+    if (result.filled > 0) {
+      final store = await (widget.openRepository ?? FileBoardStore.open)();
+      await store.save(result.tiles);
+    }
+    if (!mounted) return;
+    setState(() {
+      _tiles = result.tiles;
+      _fillingSymbols = false;
+    });
+
+    final message = result.missing == 0
+        ? 'Alle Symbole ergänzt.'
+        : result.filled == 0
+        ? 'Keine passenden Symbole gefunden.'
+        : '${result.filled} ergänzt, ${result.missing} nicht gefunden.';
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   void _onTileTap(SymbolTile tile) {
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
@@ -98,6 +135,20 @@ class BoardScreenState extends State<BoardScreen> {
       appBar: AppBar(
         title: const Text('TalkSimple'),
         actions: [
+          if (tiles != null && tiles.any((tile) => tile.imageFile == null))
+            _fillingSymbols
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox.square(
+                      dimension: 24,
+                      child: CircularProgressIndicator(strokeWidth: 3),
+                    ),
+                  )
+                : IconButton(
+                    onPressed: _fillSymbols,
+                    icon: const Icon(Icons.auto_fix_high),
+                    tooltip: 'Symbole ergänzen',
+                  ),
           IconButton(
             onPressed: tiles == null ? null : _addTile,
             icon: const Icon(Icons.add),

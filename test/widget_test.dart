@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -152,5 +154,59 @@ void main() {
     await tester.pump();
 
     expect(find.text('Kachel hinzufügen'), findsOneWidget);
+  });
+
+  testWidgets('Symbole ergänzen fills tiles, saves them and reports misses', (
+    WidgetTester tester,
+  ) async {
+    final repository = _InMemoryBoardRepository();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BoardScreen(
+          openRepository: () async => repository,
+          // Everything but "Pause" has a symbol.
+          lookupSymbol: (word) async => word == 'Pause'
+              ? null
+              : SymbolTile(label: word, imageFile: File('/s/$word.png')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Symbole ergänzen'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('7 ergänzt, 1 nicht gefunden.'), findsOneWidget);
+    final persisted = await repository.load();
+    expect(persisted!.where((t) => t.imageFile != null), hasLength(7));
+    expect(
+      persisted.firstWhere((t) => t.label == 'Pause').imageFile,
+      isNull,
+    );
+    // "Pause" still lacks an image, so the button stays for a retry.
+    expect(find.byTooltip('Symbole ergänzen'), findsOneWidget);
+  });
+
+  testWidgets('Symbole ergänzen disappears once every tile has an image', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BoardScreen(
+          openRepository: () async => _InMemoryBoardRepository(),
+          lookupSymbol: (word) async =>
+              SymbolTile(label: word, imageFile: File('/s/$word.png')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Symbole ergänzen'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Alle Symbole ergänzt.'), findsOneWidget);
+    expect(find.byTooltip('Symbole ergänzen'), findsNothing);
   });
 }
