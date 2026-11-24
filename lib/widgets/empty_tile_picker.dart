@@ -1,11 +1,10 @@
-import 'dart:async';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 
 import '../models/symbol_tile.dart';
+import '../services/speech_service.dart';
+import '../services/speech_settings.dart';
 import '../services/symbol_library.dart';
 import '../services/symbol_resolver.dart';
 
@@ -23,38 +22,42 @@ import '../services/symbol_resolver.dart';
 /// saves it under that word for next time. Large tap targets throughout -
 /// built for users with limited fine motor control.
 class EmptyTilePicker extends StatefulWidget {
-  const EmptyTilePicker({super.key, required this.onResolved});
+  /// [speechService] and [openSettings] are only overridden in tests.
+  const EmptyTilePicker({
+    super.key,
+    required this.onResolved,
+    this.speechService,
+    this.openSettings,
+  });
 
   final ValueChanged<SymbolTile> onResolved;
+  final SpeechService? speechService;
+  final Future<SpeechSettingsRepository> Function()? openSettings;
 
   @override
   State<EmptyTilePicker> createState() => _EmptyTilePickerState();
 }
 
 class _EmptyTilePickerState extends State<EmptyTilePicker> {
-  final SpeechToText _speech = SpeechToText();
+  late final SpeechService _speech =
+      widget.speechService ?? DeviceSpeechService();
 
   bool _listening = false;
   bool _busy = false;
   String? _statusMessage;
-  Completer<String>? _resultCompleter;
 
   @override
   void dispose() {
-    _speech.stop();
+    _speech.cancel();
     super.dispose();
   }
 
   Future<void> _startRecording() async {
     if (_busy) return;
-    final available = await _speech.initialize(
-      onError: (error) {
-        setState(() {
-          _listening = false;
-          _statusMessage = 'Spracherkennung nicht verfügbar.';
-        });
-      },
-    );
+    final store = await (widget.openSettings ?? openSpeechSettings)();
+    final settings = await store.load();
+    final available = await _speech.start(settings);
+    if (!mounted) return;
     if (!available) {
       setState(() => _statusMessage = 'Spracherkennung nicht verfügbar.');
       return;
@@ -63,29 +66,12 @@ class _EmptyTilePickerState extends State<EmptyTilePicker> {
       _listening = true;
       _statusMessage = 'Ich höre zu…';
     });
-    _resultCompleter = Completer<String>();
-    await _speech.listen(
-      onResult: (result) {
-        if (result.finalResult && !(_resultCompleter?.isCompleted ?? true)) {
-          _resultCompleter?.complete(result.recognizedWords);
-        }
-      },
-      listenOptions: SpeechListenOptions(
-        localeId: 'de_DE',
-        partialResults: false,
-      ),
-    );
   }
 
   Future<void> _stopRecordingAndResolve() async {
     if (!_listening) return;
-    await _speech.stop();
-    final recognized = (await _resultCompleter?.future.timeout(
-              const Duration(seconds: 3),
-              onTimeout: () => '',
-            ) ??
-            '')
-        .trim();
+    final recognized = await _speech.stop();
+    if (!mounted) return;
     setState(() => _listening = false);
 
     if (recognized.isEmpty) {
