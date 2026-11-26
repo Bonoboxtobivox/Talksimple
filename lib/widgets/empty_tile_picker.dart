@@ -1,19 +1,19 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../models/symbol_tile.dart';
+import '../services/drive_symbol_source.dart';
 import '../services/speech_service.dart';
 import '../services/speech_settings.dart';
 import '../services/symbol_library.dart';
 import '../services/symbol_resolver.dart';
+import 'image_source_dialog.dart';
 
 /// Fills an empty board tile: three equally large, equally easy ways in,
 /// for whoever's setting the board up (not the AAC user themselves).
 ///
 /// - Hold the big area down and say the word.
-/// - Tap "Bild hinzufügen" to add an image directly (camera or an existing
-///   file from Gallery/Drive).
+/// - Tap "Bild hinzufügen" to add an image directly (Metacom library,
+///   camera, or an existing file from Gallery/Drive).
 /// - Tap "Wort eingeben" to type instead of speaking.
 ///
 /// A spoken/typed word is matched against the on-device symbol library
@@ -28,11 +28,13 @@ class EmptyTilePicker extends StatefulWidget {
     required this.onResolved,
     this.speechService,
     this.openSettings,
+    this.catalog,
   });
 
   final ValueChanged<SymbolTile> onResolved;
   final SpeechService? speechService;
   final Future<SpeechSettingsRepository> Function()? openSettings;
+  final SymbolCatalog? catalog;
 
   @override
   State<EmptyTilePicker> createState() => _EmptyTilePickerState();
@@ -140,10 +142,10 @@ class _EmptyTilePickerState extends State<EmptyTilePicker> {
 
   Future<void> _photoDirect() async {
     if (_busy) return;
-    final path = await _pickImagePath();
-    if (path == null || !mounted) return;
+    final picked = await pickImage(context, catalog: widget.catalog);
+    if (picked == null || !mounted) return;
 
-    final controller = TextEditingController();
+    final controller = TextEditingController(text: picked.suggestedLabel);
     final label = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
@@ -171,69 +173,33 @@ class _EmptyTilePickerState extends State<EmptyTilePicker> {
 
     setState(() => _busy = true);
     final library = await SymbolLibrary.open();
-    final tile = await library.import(sourcePath: path, label: label.trim());
+    final tile = await library.import(
+      sourcePath: picked.path,
+      label: label.trim(),
+    );
     if (!mounted) return;
     setState(() => _busy = false);
     widget.onResolved(tile);
   }
 
+  /// No symbol found automatically: say why if Drive was the problem, then
+  /// let the caregiver pick one (Metacom search pre-filled with [word]).
   Future<SymbolTile?> _captureFallbackPhoto(
-    String label,
+    String word,
     SymbolLibrary library,
   ) async {
-    setState(() => _statusMessage = 'Kein Symbol gefunden …');
-    final path = await _pickImagePath();
-    if (path == null) return null;
-    return library.import(sourcePath: path, label: label);
-  }
-
-  /// Asks whether to take a new photo or pick an existing image
-  /// (Galerie/Drive), then launches the corresponding picker. Returns the
-  /// resulting file path, or null if either dialog was cancelled.
-  Future<String?> _pickImagePath() async {
-    final useCamera = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Bild hinzufügen'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: double.maxFinite,
-              child: FilledButton.icon(
-                onPressed: () => Navigator.of(context).pop(true),
-                icon: const Icon(Icons.photo_camera_outlined),
-                label: const Text('Kamera'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.maxFinite,
-              child: FilledButton.icon(
-                onPressed: () => Navigator.of(context).pop(false),
-                icon: const Icon(Icons.folder_open_outlined),
-                label: const Text('Galerie / Drive'),
-              ),
-            ),
-          ],
-        ),
-      ),
+    final problem = DriveSymbolSource.instance.lastProblem;
+    setState(
+      () => _statusMessage = problem?.message ?? 'Kein Symbol gefunden …',
     );
-    if (useCamera == null || !mounted) return null;
-
-    if (useCamera) {
-      final photo = await ImagePicker().pickImage(source: ImageSource.camera);
-      return photo?.path;
-    }
-    // FileType.image would launch Android's restricted Photo Picker, which
-    // excludes cloud providers like Google Drive. FileType.custom launches
-    // the full system document picker instead, which lists Drive as a
-    // source alongside local storage.
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'],
+    final picked = await pickImage(
+      context,
+      word: word,
+      title: 'Kein Symbol für „$word“',
+      catalog: widget.catalog,
     );
-    return result?.files.single.path;
+    if (picked == null) return null;
+    return library.import(sourcePath: picked.path, label: word);
   }
 
   @override

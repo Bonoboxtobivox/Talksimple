@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../models/symbol_tile.dart';
+import '../services/drive_symbol_source.dart';
 import '../services/favorites_store.dart';
 import '../services/sentence_words.dart';
 import '../services/speech_service.dart';
 import '../services/speech_settings.dart';
 import '../services/symbol_resolver.dart';
+import '../widgets/image_source_dialog.dart';
 
 /// "Sprechen → Symbole": the caregiver says (or types) a sentence, and it
 /// appears as a row of large symbols for the symbol user — for spontaneous
@@ -22,11 +24,17 @@ class SpeakSymbolsScreen extends StatefulWidget {
     this.openSettings,
     this.lookupSymbol,
     this.openFavoritesStore,
+    this.chooseSymbol,
   });
 
   final SpeechService? speechService;
   final Future<SpeechSettingsRepository> Function()? openSettings;
   final SymbolLookup? lookupSymbol;
+
+  /// Lets the caregiver pick a picture for a word by hand; returns it saved
+  /// under that word, or null if cancelled. Defaults to [pickSymbolForWord].
+  final Future<SymbolTile?> Function(BuildContext context, String word)?
+  chooseSymbol;
   final Future<FavoritesRepository> Function()? openFavoritesStore;
 
   @override
@@ -161,6 +169,39 @@ class SpeakSymbolsScreenState extends State<SpeakSymbolsScreen> {
         slot.searching = false;
       });
     }
+
+    if (slots.any((s) => s.symbol == null)) {
+      // Default lookup only: a fake in tests has no Drive behind it.
+      final problem = widget.lookupSymbol == null
+          ? DriveSymbolSource.instance.lastProblem
+          : null;
+      setState(() {
+        _status = [
+          ?problem?.message,
+          'Tippe auf ein Wort ohne Bild, um eines auszuwählen.',
+        ].join('\n');
+      });
+    }
+  }
+
+  /// Lets the caregiver choose a picture for [slot] by hand (e.g. "Schnee"
+  /// when no symbol was found automatically, or to replace a wrong one).
+  /// The choice is saved under the word, so it is found by itself next
+  /// time.
+  Future<void> _chooseFor(_Slot slot) async {
+    if (slot.searching) return;
+    final chosen = await (widget.chooseSymbol ?? pickSymbolForWord)(
+      context,
+      slot.word,
+    );
+    if (chosen == null || !mounted) return;
+    _cache[slot.word.toLowerCase()] = chosen;
+    setState(() {
+      for (final s in _slots) {
+        if (s.word.toLowerCase() == slot.word.toLowerCase()) s.symbol = chosen;
+      }
+      if (_slots.every((s) => s.symbol != null)) _status = null;
+    });
   }
 
   Future<void> _toggleFavorite() async {
@@ -236,7 +277,7 @@ class SpeakSymbolsScreenState extends State<SpeakSymbolsScreen> {
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                       )
-                    : _SymbolSentence(slots: _slots),
+                    : _SymbolSentence(slots: _slots, onTap: _chooseFor),
               ),
               if (_slots.isNotEmpty && _status != null)
                 Padding(
@@ -286,9 +327,10 @@ class SpeakSymbolsScreenState extends State<SpeakSymbolsScreen> {
 }
 
 class _SymbolSentence extends StatelessWidget {
-  const _SymbolSentence({required this.slots});
+  const _SymbolSentence({required this.slots, required this.onTap});
 
   final List<_Slot> slots;
+  final ValueChanged<_Slot> onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -302,17 +344,31 @@ class _SymbolSentence extends StatelessWidget {
             ? 2
             : 3;
         const spacing = 10.0;
-        final size = (constraints.maxWidth - spacing * (perRow - 1)) / perRow;
+        const labelHeight = 32.0;
+        final byWidth =
+            (constraints.maxWidth - spacing * (perRow - 1)) / perRow;
+        // Also fit the height, so a single word on a wide screen (tablet,
+        // landscape) does not run off the bottom. Never below 96 px: more
+        // words than fit simply scroll.
+        final rows = (slots.length / perRow).ceil();
+        final byHeight =
+            (constraints.maxHeight - spacing * (rows - 1)) / rows - labelHeight;
+        final size = byWidth < byHeight
+            ? byWidth
+            : byHeight < 96
+            ? 96.0
+            : byHeight;
         return SingleChildScrollView(
           child: Wrap(
+            alignment: WrapAlignment.center,
             spacing: spacing,
             runSpacing: spacing,
             children: [
               for (final slot in slots)
                 SizedBox(
                   width: size,
-                  height: size + 32,
-                  child: _WordCard(slot: slot),
+                  height: size + labelHeight,
+                  child: _WordCard(slot: slot, onTap: () => onTap(slot)),
                 ),
             ],
           ),
@@ -323,55 +379,84 @@ class _SymbolSentence extends StatelessWidget {
 }
 
 class _WordCard extends StatelessWidget {
-  const _WordCard({required this.slot});
+  const _WordCard({required this.slot, required this.onTap});
 
   final _Slot slot;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final image = slot.symbol?.imageFile;
+    final missing = !slot.searching && image == null;
     return Semantics(
-      label: slot.word,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
+      button: true,
+      label: missing ? '${slot.word}, Bild auswählen' : slot.word,
+      child: Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: colorScheme.outlineVariant, width: 2),
+          side: BorderSide(
+            color: missing ? colorScheme.primary : colorScheme.outlineVariant,
+            width: 2,
+          ),
         ),
-        padding: const EdgeInsets.all(6),
-        child: Column(
-          children: [
-            Expanded(
-              child: Center(
-                child: slot.searching
-                    ? const CircularProgressIndicator()
-                    : image != null
-                    ? Image.file(
-                        image,
-                        fit: BoxFit.contain,
-                        errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                      )
-                    // No symbol: the word itself, large, so the sentence
-                    // stays complete.
-                    : FittedBox(
-                        child: Text(
-                          slot.word,
-                          style: const TextStyle(
-                            fontSize: 40,
-                            fontWeight: FontWeight.bold,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: Column(
+              children: [
+                Expanded(
+                  child: Center(
+                    child: slot.searching
+                        ? const CircularProgressIndicator()
+                        : image != null
+                        ? Image.file(
+                            image,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                          )
+                        // No symbol: the word itself, large, so the sentence
+                        // stays complete.
+                        : FittedBox(
+                            child: Text(
+                              slot.word,
+                              style: const TextStyle(
+                                fontSize: 40,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ),
+                  ),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (missing) ...[
+                      Icon(
+                        Icons.add_photo_alternate_outlined,
+                        color: colorScheme.primary,
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    Flexible(
+                      child: Text(
+                        slot.word,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
-              ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            Text(
-              slot.word,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-          ],
+          ),
         ),
       ),
     );

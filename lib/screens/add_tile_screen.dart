@@ -1,8 +1,8 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../models/symbol_tile.dart';
 import '../services/symbol_library.dart';
+import '../widgets/image_source_dialog.dart';
 import '../widgets/symbol_tile_widget.dart';
 
 /// Lets a caregiver add a tile to the board: either reuse an already
@@ -34,19 +34,11 @@ class _AddTileScreenState extends State<AddTileScreen> {
   }
 
   Future<void> _importNew() async {
-    // FileType.image launches Android's restricted Photo Picker, which
-    // deliberately excludes cloud providers like Google Drive. Asking for
-    // these extensions via FileType.custom launches the full system file
-    // browser instead, which lists Drive as a source alongside local
-    // storage - needed since Metacom symbols usually live there.
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'],
-    );
-    final path = result?.files.single.path;
-    if (path == null || !mounted) return;
+    final picked = await pickImage(context);
+    if (picked == null || !mounted) return;
+    final path = picked.path;
 
-    final label = await _askForLabel();
+    final label = await _askForLabel(picked.suggestedLabel);
     if (label == null || label.trim().isEmpty || !mounted) return;
 
     final library = await SymbolLibrary.open();
@@ -55,8 +47,8 @@ class _AddTileScreenState extends State<AddTileScreen> {
     Navigator.of(context).pop(tile);
   }
 
-  Future<String?> _askForLabel() {
-    final controller = TextEditingController();
+  Future<String?> _askForLabel([String? suggestion]) {
+    final controller = TextEditingController(text: suggestion);
     return showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
@@ -88,7 +80,7 @@ class _AddTileScreenState extends State<AddTileScreen> {
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _importNew,
         icon: const Icon(Icons.add_photo_alternate_outlined),
-        label: const Text('Neu importieren'),
+        label: const Text('Neues Bild'),
       ),
       body: FutureBuilder<List<SymbolTile>>(
         future: _libraryFuture,
@@ -103,7 +95,7 @@ class _AddTileScreenState extends State<AddTileScreen> {
                 padding: EdgeInsets.all(24),
                 child: Text(
                   'Noch keine Symbole importiert.\n'
-                  'Tippe unten auf "Neu importieren" — Foto oder Metacom-Symbol '
+                  'Tippe unten auf "Neues Bild" — Foto oder Metacom-Symbol '
                   '(z.B. aus deinem synchronisierten Google-Drive-Ordner).',
                   textAlign: TextAlign.center,
                 ),
